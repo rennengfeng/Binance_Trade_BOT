@@ -1,12 +1,12 @@
 # Telegram机器人Token
-TOKEN = "8464147491:AAHfDDv95a1cEmcbgmVRZHkwjUNIscMkBRI"
+TOKEN = "TOKEN"
 
 # 授权用户ID列表
-CHAT_IDS = [7686887857]  # 替换为实际用户ID
+CHAT_IDS = [2252551511]  # 替换为实际用户ID
 
 # Binance API密钥
-BINANCE_API_KEY = "kWbjVcJ2YibbbGFwDP3sVZda7unhc7YbfltYjm5iLvpD9MPRtwrUxCV1JW5dyE3p"
-BINANCE_API_SECRET = "Bt8A1uT9pRT5MA7qFgYzjfOSVBIQR1zIN911M7lEE7deYYdLr5waQPDjkyIAilZZ"
+BINANCE_API_KEY = "api_key"
+BINANCE_API_SECRET = "key"
 
 # K线间隔设置
 DEFAULT_INTERVAL = "60m"  # MA/MACD自动交易使用的K线间隔（5m/15m/60m/240m）

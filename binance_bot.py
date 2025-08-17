@@ -1851,6 +1851,28 @@ async def handle_message(update, context):
                 
         elif state == "auto_trade:remove_symbol":
             try:
+                # 检查是否为空输入
+                if not text.strip():
+                    # 重新发送提示
+                    user_data = load_user_data(user_id)
+                    symbols = user_data['auto_trading'].get('symbols', [])
+                    
+                    if not symbols:
+                        await update.message.reply_text("当前没有自动交易对", reply_markup=reply_markup)
+                        return
+                        
+                    # 显示交易对列表
+                    symbols_list = []
+                    for i, s in enumerate(symbols):
+                        symbols_list.append(
+                            f"{i+1}. {s['symbol']} 杠杆: {s['leverage']}x 金额: ${s['amount']} 止盈: {s['tp']}% 止损: {s['sl']}%"
+                        )
+                    
+                    await update.message.reply_text(
+                        f"请选择要删除的交易对:\n" + "\n".join(symbols_list) + "\n\n请输入编号:",
+                        reply_markup=back_markup)
+                    return
+                    
                 idx = int(text) - 1
                 user_data = load_user_data(user_id)
                 
@@ -1880,6 +1902,7 @@ async def handle_message(update, context):
                             f"{i+1}. {s['symbol']} 杠杆: {s['leverage']}x 金额: ${s['amount']} 止盈: {s['tp']}% 止损: {s['sl']}%"
                         )
                     
+                    # 保持状态不变，继续等待用户输入
                     await update.message.reply_text(
                         f"✅ 已删除自动交易对: {removed['symbol']}\n\n"
                         f"剩余自动交易对:\n" + "\n".join(symbols_list) + "\n\n请输入编号继续删除或输入'取消'返回主菜单:",
@@ -1889,7 +1912,21 @@ async def handle_message(update, context):
                     return
                     
             except ValueError:
+                # 处理无效输入
                 await update.message.reply_text("请输入有效的编号")
+                # 重新显示剩余交易对
+                user_data = load_user_data(user_id)
+                symbols = user_data['auto_trading'].get('symbols', [])
+                if symbols:
+                    symbols_list = []
+                    for i, s in enumerate(symbols):
+                        symbols_list.append(
+                            f"{i+1}. {s['symbol']} 杠杆: {s['leverage']}x 金额: ${s['amount']} 止盈: {s['tp']}% 止损: {s['sl']}%"
+                        )
+                    
+                    await update.message.reply_text(
+                        f"剩余自动交易对:\n" + "\n".join(symbols_list) + "\n\n请输入编号:",
+                        reply_markup=back_markup)
                 return
                 
         elif state == "auto_trade:set_api_key":
@@ -1936,7 +1973,27 @@ async def handle_message(update, context):
         elif text in ["8️⃣ 帮助", "8"] and not state:
             await show_help(update, context)
         else:
-            await update.message.reply_text("无法识别的命令，请使用菜单操作", reply_markup=reply_markup)
+            # 检查是否在删除状态下
+            if state == "auto_trade:remove_symbol":
+                # 重新发送提示
+                user_data = load_user_data(user_id)
+                symbols = user_data['auto_trading'].get('symbols', [])
+                
+                if symbols:
+                    symbols_list = []
+                    for i, s in enumerate(symbols):
+                        symbols_list.append(
+                            f"{i+1}. {s['symbol']} 杠杆: {s['leverage']}x 金额: ${s['amount']} 止盈: {s['tp']}% 止损: {s['sl']}%"
+                        )
+                    
+                    await update.message.reply_text(
+                        f"请选择要删除的交易对:\n" + "\n".join(symbols_list) + "\n\n请输入编号:",
+                        reply_markup=back_markup)
+                else:
+                    await update.message.reply_text("当前没有自动交易对", reply_markup=reply_markup)
+                    clear_user_state(user_id)
+            else:
+                await update.message.reply_text("无法识别的命令，请使用菜单操作", reply_markup=reply_markup)
             
     except Exception as e:
         logger.error(f"消息处理出错: {e}", exc_info=True)

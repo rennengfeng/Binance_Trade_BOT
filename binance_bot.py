@@ -394,64 +394,6 @@ def calculate_macd(df, fast=12, slow=26, signal=9):
     histogram = macd - signal_line
     return macd, signal_line, histogram
 
-# --- API请求合并管理器 ---
-class APIManager:
-    """API请求合并管理器"""
-    def __init__(self):
-        self.pending_requests = {}
-        self.data_cache = {}
-        self.lock = asyncio.Lock()
-        self.last_request_time = {}
-    
-    async def get_kline(self, symbol, interval, market_type="spot", limit=100):
-        """获取K线数据（带合并功能）"""
-        cache_key = f"{symbol}_{interval}_{market_type}_{limit}"
-        
-        # 检查缓存是否有效（5秒内有效）
-        current_time = time.time()
-        if cache_key in self.data_cache:
-            data, timestamp = self.data_cache[cache_key]
-            if current_time - timestamp < 5:  # 5秒内缓存有效
-                return data
-        
-        async with self.lock:
-            # 检查是否已有相同请求在处理中
-            if cache_key in self.pending_requests:
-                # 创建新的future等待结果
-                future = asyncio.Future()
-                self.pending_requests[cache_key].append(future)
-                # 等待已有请求完成
-                return await future
-            
-            # 创建新的请求组
-            self.pending_requests[cache_key] = []
-            
-            try:
-                # 执行实际API调用
-                kline_data = await get_klines(symbol, interval, market_type, limit)
-                
-                # 更新缓存
-                self.data_cache[cache_key] = (kline_data, current_time)
-                
-                # 通知所有等待此结果的请求
-                for future in self.pending_requests[cache_key]:
-                    if not future.done():
-                        future.set_result(kline_data)
-                
-                return kline_data
-            except Exception as e:
-                # 处理错误
-                for future in self.pending_requests[cache_key]:
-                    if not future.done():
-                        future.set_exception(e)
-                raise e
-            finally:
-                # 清理请求组
-                del self.pending_requests[cache_key]
-
-# 全局API管理器实例
-api_manager = APIManager()
-
 # --- 自动交易管理 ---
 class TradeManager:
     def __init__(self):
@@ -794,39 +736,23 @@ class MonitorTask:
     def __init__(self, app):
         self.app = app
         self.price_history = {}
-        self.macd_cross_state = {}
-        self.ma_cross_state = {}
+        # 添加交叉状态记录字典
+        self.macd_cross_state = {}   # 存储每个交易对的MACD交叉状态
+        self.ma_cross_state = {}     # 存储每个交易对的MA交叉状态
         self.active = True
         self.task = None
-        self.last_detection = {}  # 记录每个检测的上次检测时间
-        self.high_frequency_mode = False  # 高频检测模式标志
-        self.next_check_time = 0  # 下次检查时间
 
     async def run(self):
-        """监控主循环 - 合并API版本"""
+        """监控主循环"""
         logger.info("监控任务已启动")
+        # 首次运行前同步时间
         await sync_binance_time()
         
         while self.active:
             try:
-                current_time = time.time()
-                
-                # 高频检测模式（每5秒检查一次）
-                if self.high_frequency_mode:
-                    # 检查是否退出高频模式
-                    if current_time > self.next_check_time:
-                        self.high_frequency_mode = False
-                        logger.info("退出高频检测模式")
-                    
-                    # 等待5秒
-                    await asyncio.sleep(5)
-                else:
-                    # 低频检测模式（每60秒检查一次）
-                    await asyncio.sleep(60)
-                
-                # 收集所有需要检测的任务
-                detection_tasks = []
-                current_timestamp = time.time()
+                # 每5分钟同步一次时间
+                if time.time() - last_sync_time > 300:  # 5分钟
+                    await sync_binance_time()
                 
                 # 获取所有用户文件
                 user_files = [f for f in os.listdir(USER_DATA_DIR) if f.endswith('.json')]
@@ -850,143 +776,50 @@ class MonitorTask:
                             if not user_data['monitors'][monitor_type]['enabled']:
                                 continue
                             
-                            # 计算K线周期结束时间
+                            # 根据监控类型执行检查
                             if monitor_type == "price":
-                                interval_str = symbol_info.get('interval', '15m')
-                            else:
-                                interval_str = DEFAULT_INTERVAL
-                            
-                            # 转换为秒数
-                            interval_seconds = {
-                                '5m': 300,
-                                '15m': 900,
-                                '60m': 3600,
-                                '240m': 14400
-                            }.get(interval_str, 900)  # 默认15分钟
-                            
-                            current_timestamp = time.time()
-                            last_end_timestamp = (current_timestamp // interval_seconds) * interval_seconds
-                            next_end_timestamp = last_end_timestamp + interval_seconds
-                            time_diff = next_end_timestamp - current_timestamp
-                            
-                            # 检测窗口：结束前10秒到0秒
-                            detection_window = 0 <= time_diff <= 10
-                            
-                            # 生成唯一检测键
-                            detection_key = (user_id, symbol, market_type, interval_str, monitor_type, next_end_timestamp)
-                            
-                            # 检查是否需要检测
-                            if detection_window:
-                                # 检查是否已经检测过这个周期
-                                if self.last_detection.get(detection_key, False):
-                                    continue
-                                
-                                # 标记为已检测
-                                self.last_detection[detection_key] = True
-                                
-                                # 添加到检测任务列表
-                                detection_tasks.append(
-                                    self.execute_detection(user_id, symbol, market_type, symbol_info)
-                                )
-                                
-                                # 进入高频检测模式
-                                if not self.high_frequency_mode:
-                                    self.high_frequency_mode = True
-                                    self.next_check_time = next_end_timestamp + 10  # 结束时间后10秒退出高频模式
-                                    logger.info(f"进入高频检测模式，将持续到 {datetime.fromtimestamp(self.next_check_time)}")
-                    
+                                await self.check_price_change(user_id, symbol, market_type, symbol_info)
+                            elif monitor_type == "macd":
+                                await self.check_macd(user_id, symbol, market_type)
+                            elif monitor_type == "ma":
+                                await self.check_ma_cross(user_id, symbol, market_type)
                     except Exception as e:
-                        logger.error(f"处理用户文件时出错: {e}")
+                        logger.error(f"处理用户 {user_file} 时出错: {e}")
                         continue
                 
-                # 并发执行所有检测任务
-                if detection_tasks:
-                    logger.info(f"本次扫描发现 {len(detection_tasks)} 个检测任务")
-                    results = await asyncio.gather(*detection_tasks, return_exceptions=True)
-                    
-                    # 处理错误结果
-                    for result in results:
-                        if isinstance(result, Exception):
-                            logger.error(f"检测任务执行失败: {result}")
-                else:
-                    logger.debug("本次扫描未发现需要检测的任务")
-                
+                # 每分钟检查一次
+                await asyncio.sleep(60)
             except Exception as e:
-                logger.error(f"监控主循环出错: {e}")
+                logger.error(f"监控任务出错: {e}")
                 await asyncio.sleep(10)
-    
-    async def execute_detection(self, user_id, symbol, market_type, symbol_info):
-        """执行单个检测任务（使用合并API）"""
-        monitor_type = symbol_info.get('monitor', 'price')
-        
-        try:
-            if monitor_type == "price":
-                interval_str = symbol_info.get('interval', '15m')
-                # 使用合并API获取K线数据
-                kline_data = await api_manager.get_kline(
-                    symbol, 
-                    interval_str, 
-                    market_type=market_type,
-                    limit=2
-                )
-                await self.check_price_change(
-                    user_id, symbol, market_type, symbol_info, kline_data
-                )
-            
-            elif monitor_type == "macd":
-                # 使用合并API获取K线数据
-                kline_data = await api_manager.get_kline(
-                    symbol, 
-                    DEFAULT_INTERVAL, 
-                    market_type=market_type,
-                    limit=100  # MACD需要更多数据
-                )
-                await self.check_macd(
-                    user_id, symbol, market_type, kline_data
-                )
-            
-            elif monitor_type == "ma":
-                # 使用合并API获取K线数据
-                kline_data = await api_manager.get_kline(
-                    symbol, 
-                    DEFAULT_INTERVAL, 
-                    market_type=market_type,
-                    limit=100  # MA需要更多数据
-                )
-                await self.check_ma_cross(
-                    user_id, symbol, market_type, kline_data
-                )
-        except Exception as e:
-            logger.error(f"检测任务出错: {e}")
-            raise
-    
-    async def check_price_change(self, user_id, symbol, market_type, symbol_info, kline_data):
+
+    async def check_price_change(self, user_id, symbol, market_type, symbol_info):
         """检查价格异动"""
         try:
-            # 从用户配置获取阈值
-            threshold = symbol_info.get('threshold', 
-                user_data.get('monitors', {}).get('price', {}).get('threshold', 3.0))
+            # 获取币种的监控周期
+            interval = symbol_info.get('interval', '15m')
+            threshold = symbol_info.get('threshold', 5.0)
             
-            # 解析K线数据
-            if len(kline_data) < 2:
-                logger.warning(f"K线数据不足，无法检测价格变化: {symbol}")
+            # 获取当前价格
+            klines = await get_klines(symbol, interval, market_type, limit=2)
+            if not klines or len(klines) < 2:
+                logger.warning(f"无法获取足够的K线数据: {symbol} {interval}")
                 return
                 
-            current_close = float(kline_data[-1][4])
-            prev_close = float(kline_data[-2][4])
+            current_price = float(klines[-1][4])
+            prev_price = float(klines[-2][4])
             
             # 计算价格变化百分比
-            change_percent = ((current_close - prev_close) / prev_close) * 100
+            change_percent = ((current_price - prev_price) / prev_price) * 100
             
             # 检查是否超过阈值
             if abs(change_percent) > threshold:
                 direction = "上涨" if change_percent > 0 else "下跌"
-                interval_str = symbol_info.get('interval', '15m')
                 message = (
-                    f"🚨 价格异动警报: {symbol} ({MARKET_TYPE_NAMES.get(market_type, market_type)}) - {INTERVALS.get(interval_str, interval_str)}\n"
+                    f"🚨 价格异动警报: {symbol} ({MARKET_TYPE_NAMES.get(market_type, market_type)}) - {INTERVALS.get(interval, interval)}\n"
                     f"• 变化: {abs(change_percent):.2f}% ({direction})\n"
-                    f"• 前价: {prev_close:.4f}\n"
-                    f"• 现价: {current_close:.4f}\n"
+                    f"• 前价: {prev_price:.4f}\n"
+                    f"• 现价: {current_price:.4f}\n"
                     f"• 阈值: {threshold}%\n"
                     f"• 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 )
@@ -995,15 +828,16 @@ class MonitorTask:
         except Exception as e:
             logger.error(f"价格异动监控出错: {e}")
 
-    async def check_macd(self, user_id, symbol, market_type, kline_data):
+    async def check_macd(self, user_id, symbol, market_type):
         """检查MACD交叉 - 使用配置的DEFAULT_INTERVAL"""
         try:
             # 使用配置的DEFAULT_INTERVAL获取K线数据
-            if not kline_data or len(kline_data) < 50:
+            klines = await get_klines(symbol, DEFAULT_INTERVAL, market_type, limit=100)
+            if not klines or len(klines) < 50:
                 logger.warning(f"无法获取足够的K线数据: {symbol} {DEFAULT_INTERVAL}")
                 return
                 
-            df = klines_to_dataframe(kline_data)
+            df = klines_to_dataframe(klines)
             if df is None or len(df) < 50:
                 return
                 
@@ -1063,15 +897,16 @@ class MonitorTask:
         except Exception as e:
             logger.error(f"MACD监控出错: {e}")
 
-    async def check_ma_cross(self, user_id, symbol, market_type, kline_data):
+    async def check_ma_cross(self, user_id, symbol, market_type):
         """检查MA交叉 - 使用配置的DEFAULT_INTERVAL"""
         try:
             # 使用配置的DEFAULT_INTERVAL获取K线数据
-            if not kline_data or len(kline_data) < 30:
+            klines = await get_klines(symbol, DEFAULT_INTERVAL, market_type, limit=100)
+            if not klines or len(klines) < 30:
                 logger.warning(f"无法获取足够的K线数据: {symbol} {DEFAULT_INTERVAL}")
                 return
                 
-            df = klines_to_dataframe(kline_data)
+            df = klines_to_dataframe(klines)
             if df is None or len(df) < 30:
                 return
                 
@@ -1203,16 +1038,11 @@ class MonitorTask:
     async def check_macd_condition(self, symbol, market_type):
         """检查MACD条件（MA+MACD模式使用）"""
         try:
-            kline_data = await api_manager.get_kline(
-                symbol, 
-                DEFAULT_INTERVAL, 
-                market_type=market_type,
-                limit=100
-            )
-            if not kline_data or len(kline_data) < 50:
+            klines = await get_klines(symbol, DEFAULT_INTERVAL, market_type, limit=100)
+            if not klines or len(klines) < 50:
                 return False
                 
-            df = klines_to_dataframe(kline_data)
+            df = klines_to_dataframe(klines)
             if df is None or len(df) < 50:
                 return False
                 
@@ -1608,7 +1438,7 @@ async def start(update, context):
         save_user_data(user_id, user_data)
         
         await update.message.reply_text(
-            "👋欢迎使用币安量化管家📊\n请使用下方菜单开始操作",
+            "欢迎使用币安监控机器人\n请使用下方菜单开始操作",
             reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"启动命令出错: {e}")
@@ -1979,12 +1809,20 @@ async def handle_message(update, context):
                     user_data['symbols'] = [s for s in user_data['symbols'] if s != symbol_to_remove]
                     
                     save_user_data(user_id, user_data)
+                    await update.message.reply_text(
+                        f"已删除 {symbol_to_remove['symbol']}（{MARKET_TYPE_NAMES.get(symbol_to_remove['type'], symbol_to_remove['type'])})",
+                        reply_markup=reply_markup)
                     
-                    # 合并两条消息为一条
-                    message = f"已删除 {symbol_to_remove['symbol']}（{MARKET_TYPE_NAMES.get(symbol_to_remove['type'], symbol_to_remove['type'])})\n\n"
-                    # 添加剩余列表
+                    # 检查是否还有交易对
+                    symbols = [s for s in user_data['symbols'] if s['monitor'] == monitor_type]
+                    if not symbols:
+                        clear_user_state(user_id)
+                        await update.message.reply_text("当前无监控交易对，已返回主菜单", reply_markup=reply_markup)
+                        return
+                    
+                    # 显示剩余交易对（带详细信息）
                     symbols_list = []
-                    for i, s in enumerate([s for s in user_data['symbols'] if s['monitor'] == monitor_type]):
+                    for i, s in enumerate(symbols):
                         if monitor_type == "price":
                             symbols_list.append(
                                 f"{i+1}. {s['symbol']}（{MARKET_TYPE_NAMES.get(s['type'], s['type'])}) 周期: {INTERVALS.get(s.get('interval', '15m'), '15分钟')} 阈值: {s.get('threshold', 5.0)}%"
@@ -1993,9 +1831,10 @@ async def handle_message(update, context):
                             symbols_list.append(
                                 f"{i+1}. {s['symbol']}（{MARKET_TYPE_NAMES.get(s['type'], s['type'])})"
                             )
-                    message += f"剩余{MONITOR_TYPE_NAMES.get(monitor_type, monitor_type)}监控的交易对:\n\n" + "\n".join(symbols_list) + "\n\n请输入编号删除或输入'取消'返回主菜单:"
                     
-                    await update.message.reply_text(message, reply_markup=back_markup)
+                    await update.message.reply_text(
+                        f"剩余{MONITOR_TYPE_NAMES.get(monitor_type, monitor_type)}监控的交易对:\n\n" + "\n".join(symbols_list) + "\n\n请输入编号删除或输入'取消'返回主菜单:",
+                        reply_markup=back_markup)
                 else:
                     await update.message.reply_text("无效的编号，请重新输入")
             except ValueError:

@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>币安量化管家系统文档</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --secondary: #2980b9;
+            --accent: #27ae60;
+            --light: #f8f9fa;
+            --dark: #1a2a3a;
+            --quant: #8e44ad;
+            --success: #27ae60;
+            --warning: #f39c12;
+            --info: #3498db;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            line-height: 1.7;
+            color: #333;
+            background: linear-gradient(135deg, #f0f5ff 0%, #f8f9ff 100%);
+            padding: 0;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        /* 头部样式 */
+        header {
+            text-align: center;
+            padding: 50px 20px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--dark) 100%);
+            color: white;
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+            border-radius: 0 0 20px 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .header-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect fill="none" width="200" height="200"/><path fill="rgba(255,255,255,0.05)" d="M41,46.5c0,9.4-7.6,17-17,17s-17-7.6-17-17s7.6-17,17-17S41,37.1,41,46.5z M200,62.5c0,9.4-7.6,17-17,17s-17-7.6-17-17s7.6-17,17-17S200,53.1,200,62.5z M100,15.5c0,9.4-7.6,17-17,17s-17-7.6-17-17s7.6-17,17-17S100,6.1,100,15.5z M150,100.5c0,9.4-7.6,17-17,17s-17-7.6-17-17s7.6-17,17-17S150,91.1,150,100.5z M50,150.5c0,9.4-7.6,17-17,17s-17-7.6-17-17s7.6-17,17-17S50,141.1,50,150.5z"/></svg>');
+        }
+        
+        .brand {
+            font-size: 3.5rem;
+            margin-bottom: 15px;
+            position: relative;
+            display: inline-block;
+            font-weight: 700;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .brand i {
+            color: var(--accent);
+            margin-right: 15px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        .tagline {
+            font-size: 1.4rem;
+            max-width: 800px;
+            margin: 0 auto 25px;
+            background: rgba(255,255,255,0.15);
+            padding: 12px 30px;
+            border-radius: 30px;
+            display: inline-block;
+            font-weight: 300;
+            letter-spacing: 1px;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 25px;
+            margin-top: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            min-width: 180px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        /* 内容卡片样式 */
+        .card {
+            background: white;
+            border-radius: 18px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+            transition: all 0.4s ease;
+            border: 1px solid #eef2f7;
+        }
+        
+        .card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+        }
+        
+        h1, h2, h3, h4 {
+            margin-bottom: 20px;
+            color: var(--primary);
+        }
+        
+        h1 {
+            font-size: 2.8rem;
+            color: white;
+        }
+        
+        h2 {
+            font-size: 2.3rem;
+            padding-bottom: 15px;
+            margin-top: 40px;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        h2:after {
+            content: "";
+            flex: 1;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+            margin-left: 20px;
+            border-radius: 3px;
+        }
+        
+        h2 i {
+            margin-right: 15px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.8rem;
+        }
+        
+        h3 {
+            font-size: 1.8rem;
+            color: var(--secondary);
+            margin-top: 35px;
+            padding-left: 20px;
+            border-left: 4px solid var(--secondary);
+        }
+        
+        h4 {
+            font-size: 1.4rem;
+            color: var(--quant);
+            margin-top: 25px;
+            display: flex;
+            align-items: center;
+        }
+        
+        h4 i {
+            margin-right: 10px;
+            color: var(--accent);
+        }
+        
+        p {
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            line-height: 1.8;
+            color: #444;
+        }
+        
+        /* 网格布局 */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+        
+        /* 功能卡片 */
+        .feature-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            border-top: 4px solid var(--accent);
+            transition: all 0.3s ease;
+            height: 100%;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        }
+        
+        .feature-card h4 {
+            margin-top: 0;
+            color: var(--dark);
+        }
+        
+        .feature-card i {
+            font-size: 2.5rem;
+            color: var(--secondary);
+            margin-bottom: 20px;
+            display: block;
+        }
+        
+        /* 量化特色区域 */
+        .quant-highlight {
+            background: linear-gradient(135deg, rgba(142, 68, 173, 0.1) 0%, rgba(41, 128, 185, 0.1) 100%);
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid rgba(142, 68, 173, 0.2);
+            margin: 25px 0;
+        }
+        
+        /* 流程图 */
+        .logic-flow {
+            background: linear-gradient(135deg, #f8f9ff 0%, #f0f5ff 100%);
+            padding: 25px;
+            border-radius: 15px;
+            margin: 25px 0;
+            position: relative;
+            border-left: 5px solid var(--accent);
+            counter-reset: step;
+        }
+        
+        .flow-step {
+            margin-bottom: 20px;
+            padding-left: 50px;
+            position: relative;
+            font-size: 1.1rem;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .flow-step:before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 0;
+            width: 40px;
+            height: 40px;
+            background: var(--secondary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        
+        /* 策略卡片 */
+        .strategy-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin: 25px 0;
+        }
+        
+        .strategy-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            transition: all 0.3s ease;
+            border: 1px solid #eaeaea;
+        }
+        
+        .strategy-card:hover {
+            transform: translateY(-7px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            border-color: var(--accent);
+        }
+        
+        .strategy-card h4 {
+            display: flex;
+            align-items: center;
+            margin-top: 0;
+        }
+        
+        .strategy-card h4 i {
+            margin-right: 12px;
+            width: 40px;
+            height: 40px;
+            background: var(--quant);
+            color: white;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+        
+        /* 代码样式 */
+        .code-block {
+            background: #1e1e1e;
+            color: #dcdcdc;
+            padding: 25px;
+            border-radius: 12px;
+            overflow-x: auto;
+            margin: 25px 0;
+            font-family: 'Consolas', monospace;
+            font-size: 1rem;
+            line-height: 1.6;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+        
+        .code-comment {
+            color: #6a9955;
+        }
+        
+        .code-keyword {
+            color: #569cd6;
+        }
+        
+        .code-function {
+            color: #dcdcaa;
+        }
+        
+        .code-string {
+            color: #ce9178;
+        }
+        
+        /* 页脚样式 */
+        footer {
+            text-align: center;
+            padding: 50px 0 30px;
+            margin-top: 50px;
+            background: var(--dark);
+            color: rgba(255,255,255,0.7);
+            border-radius: 20px 20px 0 0;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+            text-decoration: underline;
+        }
+        
+        .copyright {
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .brand {
+                font-size: 2.5rem;
+            }
+            
+            .tagline {
+                font-size: 1.1rem;
+                padding: 10px 20px;
+            }
+            
+            h2 {
+                font-size: 2rem;
+            }
+            
+            h2 i {
+                width: 50px;
+                height: 50px;
+                font-size: 1.5rem;
+            }
+            
+            .stats {
+                gap: 15px;
+            }
+            
+            .stat-card {
+                min-width: 140px;
+                padding: 15px;
+            }
+            
+            .stat-value {
+                font-size: 2rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .brand {
+                font-size: 2rem;
+            }
+            
+            h2 {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-overlay"></div>
+        <div class="container">
+            <h1 class="brand"><i class="fas fa-robot"></i>币安量化管家</h1>
+            <div class="tagline">智能监控 · 量化策略 · 自动执行 · 风险管理</div>
+            
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value">24/7</div>
+                    <div class="stat-label">全天候监控</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">10+</div>
+                    <div class="stat-label">量化策略</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">99.9%</div>
+                    <div class="stat-label">系统可用性</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">0.1s</div>
+                    <div class="stat-label">响应速度</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="card">
+            <h2><i class="fas fa-home"></i>系统概述</h2>
+            <p>币安量化管家是一个专业的加密货币量化交易管理系统，提供从市场监控到策略执行的完整解决方案。系统通过先进的算法分析市场数据，帮助用户高效管理数字资产，实现自动化交易。</p>
+            
+            <div class="quant-highlight">
+                <h3><i class="fas fa-star"></i>核心价值</h3>
+                <div class="grid">
+                    <div class="feature-card">
+                        <i class="fas fa-bolt"></i>
+                        <h4>高效自动化</h4>
+                        <p>7×24小时不间断监控市场，自动执行交易策略，解放用户时间。</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-brain"></i>
+                        <h4>智能策略</h4>
+                        <p>基于深度学习的量化策略，适应不同市场环境，动态优化参数。</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-shield-alt"></i>
+                        <h4>风险控制</h4>
+                        <p>多层次风控体系，实时计算风险价值，保护用户资产安全。</p>
+                    </div>
+                </div>
+            </div>
+            
+            <h3><i class="fas fa-cogs"></i>技术架构</h3>
+            <p>系统采用微服务架构，各模块独立部署，通过消息队列进行通信，确保系统的高可用性和可扩展性。</p>
+            
+            <div class="logic-flow">
+                <div class="flow-step">数据采集模块（实时获取市场数据）</div>
+                <div class="flow-step">策略引擎（运行量化交易策略）</div>
+                <div class="flow-step">风险管理（实时监控风险指标）</div>
+                <div class="flow-step">执行引擎（订单管理与执行）</div>
+                <div class="flow-step">用户接口（Telegram/Web/API）</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-chart-line"></i>核心功能</h2>
+            
+            <div class="grid">
+                <div class="feature-card">
+                    <i class="fas fa-eye"></i>
+                    <h4>市场监控</h4>
+                    <p>实时监控价格波动、交易量变化、技术指标信号，捕捉市场机会。</p>
+                    <ul>
+                        <li>多时间框架分析</li>
+                        <li>自定义价格提醒</li>
+                        <li>异常波动检测</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-chess-queen"></i>
+                    <h4>策略管理</h4>
+                    <p>提供多种预置策略，支持自定义策略开发与回测。</p>
+                    <ul>
+                        <li>趋势跟随策略</li>
+                        <li>均值回归策略</li>
+                        <li>套利策略</li>
+                        <li>网格交易策略</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-robot"></i>
+                    <h4>自动交易</h4>
+                    <p>根据预设策略自动执行买卖操作，支持多种订单类型。</p>
+                    <ul>
+                        <li>市价单/限价单</li>
+                        <li>止盈止损单</li>
+                        <li>冰山订单</li>
+                        <li>TWAP订单</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-wallet"></i>
+                    <h4>资产管理</h4>
+                    <p>多账户统一管理，实时监控资产变化，生成专业报表。</p>
+                    <ul>
+                        <li>资产分布分析</li>
+                        <li>收益统计分析</li>
+                        <li>风险暴露度计算</li>
+                        <li>税务报表生成</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-lock"></i>风险控制体系</h2>
+            
+            <h3><i class="fas fa-exclamation-triangle"></i>风控层级</h3>
+            <div class="grid">
+                <div class="feature-card">
+                    <i class="fas fa-clipboard-check"></i>
+                    <h4>事前风控</h4>
+                    <p>策略回测验证 · 参数安全边界 · 最大仓位限制</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <h4>事中风控</h4>
+                    <p>实时波动率监测 · 滑点控制 · 流动性检测</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-chart-bar"></i>
+                    <h4>事后风控</h4>
+                    <p>执行结果分析 · 策略效能评估 · 自适应参数调整</p>
+                </div>
+            </div>
+            
+            <h3><i class="fas fa-cogs"></i>风控参数配置</h3>
+            <div class="code-block">
+<span class="code-comment"># 风控参数配置示例</span>
+<span class="code-keyword">class</span> <span class="code-function">RiskConfig</span>:
+    MAX_POSITION = <span class="code-keyword">0.2</span>    <span class="code-comment"># 最大单币种仓位比例</span>
+    DAILY_LOSS_LIMIT = <span class="code-keyword">0.05</span> <span class="code-comment"># 单日最大亏损比例</span>
+    MAX_LEVERAGE = <span class="code-keyword">5</span>      <span class="code-comment"># 最大杠杆倍数</span>
+    VOLATILITY_THRESHOLD = <span class="code-keyword">0.15</span> <span class="code-comment"># 波动率阈值</span>
+    LIQUIDITY_RATIO = <span class="code-keyword">0.1</span>   <span class="code-comment"># 流动性比例限制</span>
+</div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-plug"></i>系统集成</h2>
+            
+            <h3><i class="fas fa-exchange-alt"></i>支持交易所</h3>
+            <div class="grid">
+                <div class="feature-card">
+                    <i class="fab fa-bitcoin"></i>
+                    <h4>币安 Binance</h4>
+                    <p>完整API支持，包括现货、合约、期权等交易品种</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-coins"></i>
+                    <h4>OKX</h4>
+                    <p>支持现货和合约交易，提供深度行情接入</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-fire"></i>
+                    <h4>火币 Huobi</h4>
+                    <p>支持现货交易和杠杆交易，提供实时行情</p>
+                </div>
+            </div>
+            
+            <h3><i class="fas fa-code"></i>API接入</h3>
+            <p>系统提供完善的REST API和WebSocket接口，方便开发者进行二次开发和系统集成。</p>
+            
+            <div class="code-block">
+<span class="code-comment"># Python API调用示例</span>
+<span class="code-keyword">import</span> quant_guardian <span class="code-keyword">as</span> qg
+
+<span class="code-comment"># 初始化客户端</span>
+client = qg.Client(api_key=<span class="code-string">"YOUR_API_KEY"</span>, api_secret=<span class="code-string">"YOUR_API_SECRET"</span>)
+
+<span class="code-comment"># 添加监控策略</span>
+strategy = {
+    <span class="code-string">"symbol"</span>: <span class="code-string">"BTCUSDT"</span>,
+    <span class="code-string">"strategy_type"</span>: <span class="code-string">"trend_following"</span>,
+    <span class="code-string">"params"</span>: {<span class="code-string">"ma_period"</span>: 60, <span class="code-string">"threshold"</span>: 0.02},
+    <span class="code-string">"action"</span>: <span class="code-string">"auto_trade"</span>
+}
+response = client.add_strategy(strategy)
+
+<span class="code-comment"># 获取账户信息</span>
+account = client.get_account()
+</div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-user-cog"></i>用户操作指南</h2>
+            
+            <h3><i class="fas fa-mobile-alt"></i>Telegram操作流程</h3>
+            <div class="logic-flow">
+                <div class="flow-step">使用 /start 命令启动机器人</div>
+                <div class="flow-step">选择"添加监控策略"</div>
+                <div class="flow-step">选择交易对和策略类型</div>
+                <div class="flow-step">配置策略参数和风险控制</div>
+                <div class="flow-step">设置通知方式和执行规则</div>
+                <div class="flow-step">启动策略监控</div>
+            </div>
+            
+            <div class="quant-highlight">
+                <h3><i class="fas fa-lightbulb"></i>最佳实践</h3>
+                <div class="grid">
+                    <div class="feature-card">
+                        <i class="fas fa-sliders-h"></i>
+                        <h4>多策略组合</h4>
+                        <p>结合趋势策略和反转策略，适应不同市场环境</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-balance-scale"></i>
+                        <h4>动态仓位管理</h4>
+                        <p>根据市场波动率动态调整仓位大小</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-sync-alt"></i>
+                        <h4>定期策略优化</h4>
+                        <p>每月回测并优化策略参数</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <div class="container">
+            <div class="footer-links">
+                <a href="#"><i class="fas fa-book"></i> 用户手册</a>
+                <a href="#"><i class="fas fa-video"></i> 视频教程</a>
+                <a href="#"><i class="fas fa-question-circle"></i> 常见问题</a>
+                <a href="#"><i class="fas fa-headset"></i> 技术支持</a>
+                <a href="#"><i class="fas fa-file-contract"></i> 服务协议</a>
+            </div>
+            <p>币安量化管家 - 专业的加密货币量化管理解决方案</p>
+            <p class="copyright">© 2023 币安量化管家系统 | 版本 v3.2.1</p>
+        </div>
+    </footer>
+    
+    <script>
+        // 添加卡片悬停效果增强
+        document.querySelectorAll('.card').forEach(card => {
+            card.addEventListener('mouseenter', function() {
+                this.style.zIndex = 10;
+            });
+            
+            card.addEventListener('mouseleave', function() {
+                this.style.zIndex = '';
+            });
+        });
+        
+        // 滚动动画效果
+        document.addEventListener('DOMContentLoaded', function() {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.style.opacity = 1;
+                        entry.target.style.transform = 'translateY(0)';
+                    }
+                });
+            }, { threshold: 0.1 });
+            
+            // 为元素添加初始状态
+            document.querySelectorAll('.card, h2, h3, .grid, .logic-flow').forEach(el => {
+                el.style.opacity = 0;
+                el.style.transform = 'translateY(30px)';
+                el.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+                observer.observe(el);
+            });
+        });
+    </script>
+</body>
+</html>

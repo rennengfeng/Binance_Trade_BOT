@@ -1608,7 +1608,7 @@ async def start(update, context):
         save_user_data(user_id, user_data)
         
         await update.message.reply_text(
-            "欢迎使用币安监控机器人\n请使用下方菜单开始操作",
+            "👋欢迎使用币安量化管家📊\n请使用下方菜单开始操作",
             reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"启动命令出错: {e}")

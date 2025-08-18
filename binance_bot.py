@@ -227,6 +227,10 @@ def load_user_data(user_id):
                         "secret": ""
                     }
                     
+                # 系统持仓记录
+                if "system_positions" not in data:
+                    data["system_positions"] = {}
+                    
                 # 迁移旧数据结构 - 确保每个监控项都是独立字典
                 new_symbols = []
                 for symbol in data.get("symbols", []):
@@ -265,7 +269,8 @@ def load_user_data(user_id):
                 "binance_api": {
                     "key": "",
                     "secret": ""
-                }
+                },
+                "system_positions": {}
             }
     # 默认配置
     return {
@@ -284,7 +289,8 @@ def load_user_data(user_id):
         "binance_api": {
             "key": "",
             "secret": ""
-        }
+        },
+        "system_positions": {}
     }
 
 def save_user_data(user_id, data):
@@ -393,19 +399,23 @@ class TradeManager:
     def __init__(self):
         self.positions = {}
     
-    async def place_market_order(self, api_key, api_secret, symbol, side, amount, leverage=None):
+    async def place_market_order(self, user_id, symbol, side, amount, leverage=None):
         """下市价单"""
         try:
+            user_data = load_user_data(user_id)
+            api_key = user_data['binance_api']['key']
+            api_secret = user_data['binance_api']['secret']
+            
             symbol = symbol.upper()
             
             # 设置杠杆
             if leverage:
-                leverage_resp = await self.change_leverage(api_key, api_secret, symbol, leverage)
+                leverage_resp = await self.change_leverage(user_id, symbol, leverage)
                 if leverage_resp and "error" in leverage_resp:
                     return leverage_resp
             
             # 获取当前价格计算数量
-            ticker = await self.get_ticker_price(api_key, api_secret, symbol, is_futures=True)
+            ticker = await self.get_ticker_price(user_id, symbol, is_futures=True)
             if not ticker or 'price' not in ticker:
                 logger.error("无法获取当前价格")
                 return {"error": True, "msg": "无法获取当前价格"}
@@ -425,14 +435,40 @@ class TradeManager:
             await sync_binance_time()
             
             response = await binance_api_request("POST", "/fapi/v1/order", params, api_key, api_secret, is_futures=True)
+            
+            # 记录系统持仓
+            if response and "orderId" in response:
+                user_data = load_user_data(user_id)
+                system_positions = user_data.get("system_positions", {})
+                
+                if symbol not in system_positions:
+                    system_positions[symbol] = []
+                    
+                system_positions[symbol].append({
+                    "order_id": response["orderId"],
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "entry_price": current_price,
+                    "leverage": leverage,
+                    "amount": amount,
+                    "timestamp": datetime.now().isoformat()
+                })
+                user_data["system_positions"] = system_positions
+                save_user_data(user_id, user_data)
+            
             return response
         except Exception as e:
             logger.error(f"下单失败: {e}")
             return {"error": True, "msg": str(e)}
     
-    async def change_leverage(self, api_key, api_secret, symbol, leverage):
+    async def change_leverage(self, user_id, symbol, leverage):
         """更改杠杆"""
         try:
+            user_data = load_user_data(user_id)
+            api_key = user_data['binance_api']['key']
+            api_secret = user_data['binance_api']['secret']
+            
             params = {
                 "symbol": symbol,
                 "leverage": leverage,
@@ -447,9 +483,16 @@ class TradeManager:
             logger.error(f"设置杠杆失败: {e}")
             return {"error": True, "msg": str(e)}
     
-    async def close_position(self, api_key, api_secret, symbol):
+    async def close_position(self, user_id, symbol):
         """平仓"""
         try:
+            user_data = load_user_data(user_id)
+            api_key = user_data['binance_api']['key']
+            api_secret = user_data['binance_api']['secret']
+            
+            # 更新持仓
+            await self.update_positions(user_id)
+            
             if symbol not in self.positions:
                 return {"error": True, "msg": "没有持仓可平"}
                 
@@ -471,16 +514,31 @@ class TradeManager:
             if response and "error" in response:
                 return response
             elif response:
-                del self.positions[symbol]
+                # 移除系统持仓记录
+                if symbol in self.positions:
+                    del self.positions[symbol]
+                    
+                # 更新系统持仓记录
+                user_data = load_user_data(user_id)
+                system_positions = user_data.get("system_positions", {})
+                if symbol in system_positions:
+                    del system_positions[symbol]
+                    user_data["system_positions"] = system_positions
+                    save_user_data(user_id, user_data)
+                    
                 return True
             return {"error": True, "msg": "平仓失败"}
         except Exception as e:
             logger.error(f"平仓失败: {e}")
             return {"error": True, "msg": str(e)}
     
-    async def update_positions(self, api_key, api_secret):
+    async def update_positions(self, user_id):
         """更新持仓信息"""
         try:
+            user_data = load_user_data(user_id)
+            api_key = user_data['binance_api']['key']
+            api_secret = user_data['binance_api']['secret']
+            
             params = {}
             response = await binance_api_request("GET", "/fapi/v2/positionRisk", params, api_key, api_secret, is_futures=True)
             if response and "error" in response:
@@ -490,22 +548,38 @@ class TradeManager:
             for pos in response:
                 position_amt = float(pos['positionAmt'])
                 if position_amt != 0:
+                    # 在单向持仓模式下，positionSide可能不存在，我们通过持仓正负判断方向
+                    if 'positionSide' in pos:
+                        side = pos['positionSide']
+                        if side == 'BOTH':
+                            # 如果为BOTH，则用持仓正负判断
+                            side = "LONG" if position_amt > 0 else "SHORT"
+                    else:
+                        side = "LONG" if position_amt > 0 else "SHORT"
+                    
+                    # 注意：未实现盈亏字段为'unRealizedProfit'
+                    unrealized_profit = float(pos['unRealizedProfit'])
+                    
                     self.positions[pos['symbol']] = {
-                        'side': "LONG" if position_amt > 0 else "SHORT",
+                        'side': side,
                         'leverage': int(pos['leverage']),
                         'quantity': abs(position_amt),
                         'entry_price': float(pos['entryPrice']),
                         'mark_price': float(pos['markPrice']),
-                        'unrealized_profit': float(pos['unrealizedProfit'])
+                        'unrealized_profit': unrealized_profit
                     }
             return True
         except Exception as e:
             logger.error(f"更新持仓失败: {e}")
             return False
     
-    async def get_ticker_price(self, api_key, api_secret, symbol, is_futures=False):
+    async def get_ticker_price(self, user_id, symbol, is_futures=False):
         """获取当前价格"""
         try:
+            user_data = load_user_data(user_id)
+            api_key = user_data['binance_api']['key']
+            api_secret = user_data['binance_api']['secret']
+            
             endpoint = "/api/v3/ticker/price" if not is_futures else "/fapi/v1/ticker/price"
             params = {"symbol": symbol.upper()}
             return await binance_api_request("GET", endpoint, params, api_key, api_secret, is_futures)
@@ -529,7 +603,7 @@ class AutoTradeTask:
             return
             
         # 获取当前持仓方向
-        await trade_manager.update_positions(api_key, api_secret)
+        await trade_manager.update_positions(user_id)
         current_position = trade_manager.positions.get(symbol, None)
         current_side = current_position['side'] if current_position else None
         
@@ -541,7 +615,7 @@ class AutoTradeTask:
             # 信号反转需要先平仓
             if (current_side == "LONG" and new_side == "SHORT") or \
                (current_side == "SHORT" and new_side == "LONG"):
-                close_resp = await trade_manager.close_position(api_key, api_secret, symbol)
+                close_resp = await trade_manager.close_position(user_id, symbol)
                 if close_resp and "error" in close_resp:
                     error_msg = close_resp.get('msg', '未知错误')
                     message = (
@@ -554,8 +628,7 @@ class AutoTradeTask:
         
         # 开新仓
         response = await trade_manager.place_market_order(
-            api_key=api_key,
-            api_secret=api_secret,
+            user_id=user_id,
             symbol=symbol,
             side="BUY" if new_side == "LONG" else "SELL",
             amount=config['amount'],
@@ -573,7 +646,7 @@ class AutoTradeTask:
             return
         elif response:
             # 更新本地持仓记录
-            await trade_manager.update_positions(api_key, api_secret)
+            await trade_manager.update_positions(user_id)
             
             # 发送交易通知
             direction = "做多" if new_side == "LONG" else "做空"
@@ -593,7 +666,7 @@ class AutoTradeTask:
         """设置止盈止损"""
         try:
             # 获取当前价格
-            ticker = await trade_manager.get_ticker_price(api_key, api_secret, symbol, is_futures=True)
+            ticker = await trade_manager.get_ticker_price(user_id, symbol, is_futures=True)
             if not ticker or 'price' not in ticker:
                 logger.error("无法获取当前价格，无法设置止盈止损")
                 return
@@ -1567,19 +1640,66 @@ async def show_status(update, context):
         api_status = "🟢 已设置" if binance_api.get('key') and binance_api.get('secret') else "🔴 未设置"
         
         # 持仓列表
-        positions_list = "  无持仓"
+        system_positions_list = "  无系统持仓"
+        other_positions_list = "  无非系统持仓"
+        
         if binance_api.get('key') and binance_api.get('secret'):
             try:
-                await trade_manager.update_positions(binance_api['key'], binance_api['secret'])
-                positions = trade_manager.positions
-                if positions:
-                    positions_list = "\n".join([
-                        f"  • {symbol} {POSITION_SIDE[pos['side']]} {pos['leverage']}x 数量: {pos['quantity']} 盈亏: ${pos['unrealized_profit']:.2f}"
-                        for symbol, pos in positions.items()
-                    ])
+                # 更新账户持仓
+                success = await trade_manager.update_positions(user_id)
+                if not success:
+                    system_positions_list = "  更新持仓失败"
+                    other_positions_list = "  更新持仓失败"
+                else:
+                    positions = trade_manager.positions
+                    
+                    # 获取系统持仓记录
+                    system_positions = user_data.get('system_positions', {})
+                    
+                    # 分离系统持仓和非系统持仓
+                    system_positions_items = []
+                    other_positions_items = []
+                    
+                    for symbol, pos in positions.items():
+                        # 检查是否为系统持仓
+                        if symbol in system_positions:
+                            # 获取系统持仓详情
+                            sys_pos = system_positions[symbol]
+                            if isinstance(sys_pos, list) and len(sys_pos) > 0:
+                                # 取最新的一条系统持仓记录
+                                latest_sys_pos = sys_pos[-1]
+                                system_positions_items.append(
+                                    f"  • {symbol} {POSITION_SIDE[pos['side']]} {latest_sys_pos.get('leverage', 'N/A')}x "
+                                    f"数量: {pos['quantity']:.4f} "
+                                    f"开仓价: {latest_sys_pos.get('entry_price', 'N/A'):.4f} "
+                                    f"盈亏: ${pos['unrealized_profit']:.2f}"
+                                )
+                            else:
+                                # 如果系统持仓记录异常，仍然显示
+                                system_positions_items.append(
+                                    f"  • {symbol} {POSITION_SIDE[pos['side']]} {pos.get('leverage', 'N/A')}x "
+                                    f"数量: {pos['quantity']:.4f} "
+                                    f"盈亏: ${pos['unrealized_profit']:.2f}"
+                                )
+                        else:
+                            # 非系统持仓
+                            other_positions_items.append(
+                                f"  • {symbol} {POSITION_SIDE[pos['side']]} {pos.get('leverage', 'N/A')}x "
+                                f"数量: {pos['quantity']:.4f} "
+                                f"开仓价: {pos.get('entry_price', 'N/A'):.4f} "
+                                f"盈亏: ${pos['unrealized_profit']:.2f}"
+                            )
+                    
+                    # 格式化持仓列表
+                    if system_positions_items:
+                        system_positions_list = "\n".join(system_positions_items)
+                    if other_positions_items:
+                        other_positions_list = "\n".join(other_positions_items)
+                
             except Exception as e:
                 logger.error(f"更新持仓失败: {e}")
-                positions_list = "  更新持仓失败"
+                system_positions_list = "  更新持仓失败"
+                other_positions_list = "  更新持仓失败"
         
         message = (
             f"📊 监控状态: {status}\n\n"
@@ -1594,7 +1714,8 @@ async def show_status(update, context):
             f"   API状态: {api_status}\n"
             f"   交易模式: {mode}\n"
             f"   交易对列表:\n{auto_list}\n\n"
-            f"💰 持仓列表:\n{positions_list}"
+            f"💰 系统持仓列表（由机器人自动开仓）:\n{system_positions_list}\n\n"
+            f"💰 非系统持仓列表（用户手动开仓）:\n{other_positions_list}"
         )
         
         await update.message.reply_text(message, reply_markup=reply_markup)

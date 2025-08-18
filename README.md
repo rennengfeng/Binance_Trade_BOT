@@ -13,7 +13,7 @@ cd Binance_Trade_BOT
 
 **安装依赖**
 ```bash
-pip3 install -r requirements.txt
+pip3 install -r requirements.txt  #或者 pip install -r requirements.txt
 ```
 
 **安装时间同步**

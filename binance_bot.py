@@ -86,8 +86,9 @@ POSITION_SIDE = {
 
 # API错误代码
 API_ERROR_CODES = {
-    -2015: "无效的API密钥",
+    -1021: "时间戳过期",
     -1022: "无效的API签名",
+    -2015: "无效的API密钥",
     -2014: "API密钥格式无效",
     -1102: "强制参数为空或格式错误",
     -1013: "无效金额",
@@ -110,37 +111,51 @@ back_markup = ReplyKeyboardMarkup(back_menu, resize_keyboard=True)
 
 # 服务器时间偏移量（用于与Binance API时间同步）
 time_offset = 0
+last_sync_time = 0  # 上次同步时间的时间戳
 
 # --- Binance API 工具函数 ---
 def generate_signature(api_secret, data):
     """生成签名"""
     return hmac.new(api_secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
 
-async def binance_api_request(method, endpoint, params, api_key, api_secret, is_futures=False):
-    """发送Binance API请求"""
+async def binance_api_request(method, endpoint, params, api_key, api_secret, is_futures=False, retry_on_time_error=True):
+    """发送Binance API请求，增加时间错误重试机制"""
+    global time_offset, last_sync_time
+    
     base_url = "https://api.binance.com"
     if is_futures:
         base_url = "https://fapi.binance.com"
     
-    url = f"{base_url}{endpoint}"
-    headers = {"X-MBX-APIKEY": api_key}
+    # 添加时间戳参数
+    timestamp = int(time.time() * 1000) + time_offset
+    params["timestamp"] = timestamp
     
-    # 添加签名
+    # 创建查询字符串
     query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
     signature = generate_signature(api_secret, query_string)
-    url = f"{url}?{query_string}&signature={signature}"
+    url = f"{base_url}{endpoint}?{query_string}&signature={signature}"
+    
+    headers = {"X-MBX-APIKEY": api_key}
     
     async with aiohttp.ClientSession() as session:
         try:
             if method == "GET":
                 async with session.get(url, headers=headers) as resp:
-                    return await handle_response(resp)
+                    response = await handle_response(resp)
             elif method == "POST":
                 async with session.post(url, headers=headers, data=params) as resp:
-                    return await handle_response(resp)
+                    response = await handle_response(resp)
             elif method == "DELETE":
                 async with session.delete(url, headers=headers) as resp:
-                    return await handle_response(resp)
+                    response = await handle_response(resp)
+            
+            # 检查是否需要重试（时间错误）
+            if retry_on_time_error and response and "error" in response and response.get("code") in [-1021, -1022]:
+                logger.warning(f"时间同步错误，重新同步时间并重试: {response.get('msg')}")
+                await sync_binance_time()
+                return await binance_api_request(method, endpoint, params, api_key, api_secret, is_futures, False)
+            
+            return response
         except Exception as e:
             logger.error(f"API请求出错: {e}")
             return None
@@ -283,7 +298,7 @@ def save_user_data(user_id, data):
 # --- 时间同步函数 ---
 async def sync_binance_time():
     """同步Binance服务器时间"""
-    global time_offset
+    global time_offset, last_sync_time
     url = "https://api.binance.com/api/v3/time"
     async with aiohttp.ClientSession() as session:
         try:
@@ -293,6 +308,7 @@ async def sync_binance_time():
                     server_time = data['serverTime']
                     local_time = int(time.time() * 1000)
                     time_offset = server_time - local_time
+                    last_sync_time = time.time()
                     logger.info(f"时间同步完成，服务器时间偏移: {time_offset}ms")
                 else:
                     error_text = await resp.text()
@@ -403,8 +419,10 @@ class TradeManager:
                 "side": side,
                 "type": "MARKET",
                 "quantity": quantity,
-                "timestamp": int(time.time() * 1000)
             }
+            
+            # 交易前同步时间
+            await sync_binance_time()
             
             response = await binance_api_request("POST", "/fapi/v1/order", params, api_key, api_secret, is_futures=True)
             return response
@@ -418,8 +436,11 @@ class TradeManager:
             params = {
                 "symbol": symbol,
                 "leverage": leverage,
-                "timestamp": int(time.time() * 1000)
             }
+            
+            # 交易前同步时间
+            await sync_binance_time()
+            
             response = await binance_api_request("POST", "/fapi/v1/leverage", params, api_key, api_secret, is_futures=True)
             return response
         except Exception as e:
@@ -441,8 +462,10 @@ class TradeManager:
                 "type": "MARKET",
                 "quantity": position['quantity'],
                 "reduceOnly": "true",
-                "timestamp": int(time.time() * 1000)
             }
+            
+            # 交易前同步时间
+            await sync_binance_time()
             
             response = await binance_api_request("POST", "/fapi/v1/order", params, api_key, api_secret, is_futures=True)
             if response and "error" in response:
@@ -458,7 +481,7 @@ class TradeManager:
     async def update_positions(self, api_key, api_secret):
         """更新持仓信息"""
         try:
-            params = {"timestamp": int(time.time() * 1000)}
+            params = {}
             response = await binance_api_request("GET", "/fapi/v2/positionRisk", params, api_key, api_secret, is_futures=True)
             if response and "error" in response:
                 return False
@@ -484,7 +507,7 @@ class TradeManager:
         """获取当前价格"""
         try:
             endpoint = "/api/v3/ticker/price" if not is_futures else "/fapi/v1/ticker/price"
-            params = {"symbol": symbol.upper(), "timestamp": int(time.time() * 1000)}
+            params = {"symbol": symbol.upper()}
             return await binance_api_request("GET", endpoint, params, api_key, api_secret, is_futures)
         except Exception as e:
             logger.error(f"获取价格失败: {e}")
@@ -597,8 +620,11 @@ class AutoTradeTask:
                     "type": "TAKE_PROFIT_MARKET",
                     "stopPrice": round(tp_price, 4),
                     "closePosition": "true",
-                    "timestamp": int(time.time() * 1000)
                 }
+                
+                # 交易前同步时间
+                await sync_binance_time()
+                
                 tp_resp = await binance_api_request("POST", "/fapi/v1/order", tp_params, api_key, api_secret, is_futures=True)
                 if tp_resp and "error" in tp_resp:
                     error_msg = tp_resp.get('msg', '未知错误')
@@ -612,8 +638,11 @@ class AutoTradeTask:
                     "type": "STOP_MARKET",
                     "stopPrice": round(sl_price, 4),
                     "closePosition": "true",
-                    "timestamp": int(time.time() * 1000)
                 }
+                
+                # 交易前同步时间
+                await sync_binance_time()
+                
                 sl_resp = await binance_api_request("POST", "/fapi/v1/order", sl_params, api_key, api_secret, is_futures=True)
                 if sl_resp and "error" in sl_resp:
                     error_msg = sl_resp.get('msg', '未知错误')
@@ -648,8 +677,8 @@ class MonitorTask:
         
         while self.active:
             try:
-                # 每15分钟同步一次时间
-                if datetime.now().minute % 15 == 0:
+                # 每5分钟同步一次时间
+                if time.time() - last_sync_time > 300:  # 5分钟
                     await sync_binance_time()
                 
                 # 获取所有用户文件
@@ -1595,7 +1624,7 @@ async def show_help(update, context):
         "• MA交叉交易: 以MA交叉信号为交易信号\n"
         "• MACD交叉交易: 以MACD交叉信号为交易信号\n"
         "• MA+MACD联合交易: 以MA信号为主，验证MACD指标>0后交易\n\n"
-        "🔄 服务器时间每15分钟与Binance同步一次\n"
+        "🔄 服务器时间每5分钟与Binance同步一次\n"
         "⏱ 所有监控数据每分钟刷新一次"
     ).format(ma_macd_interval=ma_macd_interval)
     
@@ -1902,7 +1931,7 @@ async def handle_message(update, context):
                             f"{i+1}. {s['symbol']} 杠杆: {s['leverage']}x 金额: ${s['amount']} 止盈: {s['tp']}% 止损: {s['sl']}%"
                         )
                     
-                    # 保持状态不变，继续等待用户输入
+                    # 只发送一条合并的消息
                     await update.message.reply_text(
                         f"✅ 已删除自动交易对: {removed['symbol']}\n\n"
                         f"剩余自动交易对:\n" + "\n".join(symbols_list) + "\n\n请输入编号继续删除或输入'取消'返回主菜单:",
